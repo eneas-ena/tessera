@@ -30,7 +30,9 @@ html,body{margin:0;padding:0;height:100%}
 body{
   background:radial-gradient(1200px 700px at 50% -10%, #1B2C4E 0%, transparent 60%), var(--navy);
   color:var(--ink);font-family:'Cormorant Garamond',Georgia,serif;font-size:18px;overflow-x:hidden;
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
 }
+canvas,img,.cell,.pc{-webkit-user-drag:none;-webkit-touch-callout:none;user-select:none}
 h1,h2,h3,button{font-family:'Cinzel',Georgia,serif}
 
 .wrap{max-width:1040px;margin:0 auto;padding:0 16px calc(28px + env(safe-area-inset-bottom))}
@@ -148,11 +150,11 @@ header.top{display:flex;align-items:center;justify-content:space-between;gap:12p
 @keyframes land{0%{transform:scale(1.16);opacity:.85}100%{transform:scale(1);opacity:1}}
 .tray{display:flex;gap:10px;align-items:center;overflow-x:auto;overflow-y:hidden;
   height:104px;padding:8px 10px;margin-top:12px;background:rgba(11,20,37,.65);
-  border:1px solid var(--line);border-radius:10px;touch-action:pan-x;
+  border:1px solid var(--line);border-radius:10px;touch-action:none;
   scrollbar-width:thin;scrollbar-color:var(--line) transparent}
 .tray::-webkit-scrollbar{height:7px}
 .tray::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
-.tray .pc{position:relative;height:100%;width:auto;flex:none;touch-action:pan-x}
+.tray .pc{position:relative;height:100%;width:auto;flex:none;touch-action:none}
 .tray.empty:after{content:"Todas as peças foram usadas";font-family:'Cormorant Garamond';
   font-style:italic;color:var(--ink-dim);margin:auto;font-size:17px}
 .shake{animation:shake .32s}
@@ -817,7 +819,7 @@ function buildJigBoard(){
   const loose=[];
   for(let i=0;i<G.cols*G.rows;i++){
     const cv=G.pieces[i];
-    cv.className="pc"; cv.dataset.piece=i;
+    cv.className="pc"; cv.dataset.piece=i; cv.draggable=false;
     G.nodes.push(cv);
     if(G.placed[i]){ setOnBoard(cv,i,wPct,hPct); jig.appendChild(cv); }
     else loose.push(cv);
@@ -888,6 +890,7 @@ function finish(){
 (function(){
   const float=$("#float");
   let mode=null, from=-1, startPt=null, dragging=false, node=null, ox=0, oy=0;
+  let rolando=false, naBandeja=false, rol0=0;
 
   function boardEl(){ return G && G.mode==="grid" ? $("#board") : $("#jig"); }
 
@@ -932,33 +935,54 @@ function finish(){
     mode=null; startPt=null; dragging=false; from=-1; if(G&&G.mode==="grid") paintGrid();
   });
 
-  /* --- encaixe: peças soltas --- */
+  /* --- encaixe: peças soltas ---
+     A bandeja rola por conta do próprio app: o iOS já não recebe o gesto,
+     então não há mais lupa de seleção nem arraste nativo roubando o toque. */
   document.addEventListener("pointerdown", e=>{
     if(!G||G.mode!=="jig"||G.done) return;
+    soltarPresas();
     const pc=e.target.closest(".pc"); if(!pc||pc.classList.contains("set")) return;
     e.preventDefault();
-    mode="jig"; node=pc; from=+pc.dataset.piece; startPt={x:e.clientX,y:e.clientY}; dragging=false;
-    node.setPointerCapture(e.pointerId);
+    mode="jig"; node=pc; from=+pc.dataset.piece;
+    startPt={x:e.clientX,y:e.clientY}; dragging=false; rolando=false;
+    naBandeja = pc.parentElement === $("#tray");
+    rol0 = $("#tray").scrollLeft;
+    try{ node.setPointerCapture(e.pointerId); }catch(_){}
   });
+
   document.addEventListener("pointermove", e=>{
     if(mode!=="jig"||!startPt||!node) return;
+    e.preventDefault();
     const dx=e.clientX-startPt.x, dy=e.clientY-startPt.y;
-    if(!dragging && Math.hypot(dx,dy)>7){
-      dragging=true;
-      const jr=$("#jig").getBoundingClientRect();
-      const w=jr.width*G.wPct/100, h=jr.height*G.hPct/100;
-      ox=w/2; oy=h/2;
-      node.classList.remove("sel");
-      node.style.position="fixed"; node.style.width=w+"px"; node.style.height=h+"px";
-      node.style.zIndex="220"; node.style.pointerEvents="none";
-      node.style.filter="drop-shadow(0 10px 16px rgba(0,0,0,.6))";
-      document.body.appendChild(node);
+
+    if(rolando){ $("#tray").scrollLeft = rol0 - dx; return; }
+
+    if(!dragging){
+      const ax=Math.abs(dx), ay=Math.abs(dy);
+      /* gesto claramente horizontal e começado na bandeja => rolar a bandeja */
+      if(naBandeja && ax>12 && ax>ay*1.4){
+        rolando=true; $("#tray").scrollLeft = rol0 - dx; return;
+      }
+      if(Math.hypot(dx,dy)>7){
+        dragging=true;
+        const jr=$("#jig").getBoundingClientRect();
+        const w=jr.width*G.wPct/100, h=jr.height*G.hPct/100;
+        ox=w/2; oy=h/2;
+        node.classList.remove("sel");
+        node.style.position="fixed"; node.style.width=w+"px"; node.style.height=h+"px";
+        node.style.zIndex="220"; node.style.pointerEvents="none";
+        node.style.filter="drop-shadow(0 10px 16px rgba(0,0,0,.6))";
+        node.dataset.loose="1";
+        document.body.appendChild(node);
+      }
     }
     if(dragging){ node.style.left=(e.clientX-ox)+"px"; node.style.top=(e.clientY-oy)+"px"; }
-  });
+  }, {passive:false});
+
   document.addEventListener("pointerup", e=>{
-    if(mode!=="jig"||!startPt||!node||!G) return;
+    if(mode!=="jig"||!startPt||!node||!G){ zerar(); return; }
     const n=node, i=from;
+    if(rolando){ zerar(); return; }
     if(dragging){
       n.style.filter=""; n.style.pointerEvents="";
       const jr=$("#jig").getBoundingClientRect();
@@ -968,17 +992,27 @@ function finish(){
       const tol=Math.max(26, 0.62*Math.min(G.cw/G.iw*jr.width, G.ch/G.ih*jr.height));
       if(Math.hypot(e.clientX-tx, e.clientY-ty) <= tol){
         n.style.position=""; n.style.zIndex=""; n.style.left=""; n.style.top="";
+        delete n.dataset.loose;
         placePiece(i);
       } else {
         returnToTray(n);
-        if(e.clientY < jr.bottom && e.clientY > jr.top){ G.moves++; updateStats(); beep(230,0.12,0.05); n.classList.add("shake"); setTimeout(()=>n.classList.remove("shake"),340); }
+        if(e.clientY < jr.bottom && e.clientY > jr.top){
+          G.moves++; updateStats(); beep(230,0.12,0.05);
+          n.classList.add("shake"); setTimeout(()=>n.classList.remove("shake"),340);
+        }
       }
     } else {
       if(G.sel===i){ G.sel=null; n.classList.remove("sel"); }
       else { $$(".pc.sel").forEach(x=>x.classList.remove("sel")); G.sel=i; n.classList.add("sel"); beep(560,0.07,0.04); }
     }
-    mode=null; startPt=null; dragging=false; node=null; from=-1;
+    zerar();
   });
+
+  function zerar(){ mode=null; startPt=null; dragging=false; rolando=false; node=null; from=-1; }
+  /* rede de segurança: nenhuma peça pode ficar esquecida flutuando na tela */
+  function soltarPresas(){
+    $$('.pc[data-loose="1"]').forEach(n=>{ if(n!==node) returnToTray(n); });
+  }
 
   /* toque no tabuleiro com peça selecionada */
   $("#jig").addEventListener("pointerup", e=>{
@@ -995,14 +1029,24 @@ function finish(){
   function returnToTray(n){
     n.style.position=""; n.style.width=""; n.style.height="";
     n.style.left=""; n.style.top=""; n.style.zIndex="";
+    n.style.filter=""; n.style.pointerEvents="";
+    delete n.dataset.loose;
     $("#tray").appendChild(n);
     $("#tray").classList.remove("empty");
   }
   document.addEventListener("pointercancel", ()=>{
     if(mode==="jig"&&dragging&&node) returnToTray(node);
-    mode=null; startPt=null; dragging=false; node=null; from=-1;
+    zerar();
   });
 })();
+
+/* ============ bloqueio de gestos nativos (iOS) ============ */
+document.addEventListener("contextmenu", e=>{
+  if(e.target.closest && e.target.closest(".pc,.cell,.board,.jig,.tray,.frame")) e.preventDefault();
+});
+document.addEventListener("dragstart", e=>e.preventDefault());
+["gesturestart","gesturechange","gestureend"].forEach(g=>
+  document.addEventListener(g, e=>e.preventDefault()));
 
 /* ============ controles ============ */
 $("#tray").addEventListener("wheel", e=>{
