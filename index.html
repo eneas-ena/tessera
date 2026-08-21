@@ -148,12 +148,26 @@ header.top{display:flex;align-items:center;justify-content:space-between;gap:12p
 .pc.sel{filter:drop-shadow(0 0 0 var(--gold)) drop-shadow(0 0 6px var(--gold)) drop-shadow(0 6px 10px rgba(0,0,0,.5))}
 .pc.land{animation:land .3s ease}
 @keyframes land{0%{transform:scale(1.16);opacity:.85}100%{transform:scale(1);opacity:1}}
+.traywrap{display:flex;align-items:stretch;gap:6px;margin-top:12px}
+.trayzone{flex:1;min-width:0;position:relative}
+.tarrow{flex:none;width:38px;background:rgba(11,20,37,.65);border:1px solid var(--line);
+  border-radius:10px;color:var(--gold);font-family:'Cinzel';font-size:26px;line-height:1;
+  cursor:pointer;transition:.15s;padding:0}
+.tarrow:hover{background:rgba(201,162,39,.14)}
+.tarrow:active{background:rgba(201,162,39,.26)}
+.tarrow[disabled]{opacity:.22;cursor:default;background:rgba(11,20,37,.65)}
+.tprog{position:absolute;left:10px;right:10px;bottom:5px;height:3px;
+  background:rgba(201,162,39,.15);border-radius:2px;overflow:hidden;
+  pointer-events:none;opacity:0;transition:opacity .2s}
+.tprog.on{opacity:1}
+.tprog i{display:block;height:100%;background:var(--gold);border-radius:2px;
+  transform-origin:left center;transition:transform .1s linear}
 .tray{display:flex;gap:10px;align-items:center;overflow-x:auto;overflow-y:hidden;
-  height:104px;padding:8px 10px;margin-top:12px;background:rgba(11,20,37,.65);
+  height:104px;padding:8px 10px 14px;background:rgba(11,20,37,.65);
   border:1px solid var(--line);border-radius:10px;touch-action:none;
-  scrollbar-width:thin;scrollbar-color:var(--line) transparent}
-.tray::-webkit-scrollbar{height:7px}
-.tray::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+  scrollbar-width:none;-ms-overflow-style:none}
+.tray.dense .pc{height:64%}
+.tray::-webkit-scrollbar{display:none}
 .tray .pc{position:relative;height:100%;width:auto;flex:none;touch-action:none}
 .tray.empty:after{content:"Todas as peças foram usadas";font-family:'Cormorant Garamond';
   font-style:italic;color:var(--ink-dim);margin:auto;font-size:17px}
@@ -213,7 +227,8 @@ header.top{display:flex;align-items:center;justify-content:space-between;gap:12p
   .lead h2{font-size:20px}
   .frame{padding:7px}
   .sweep{inset:7px}
-  .tray{height:86px}
+  .tray{height:92px}
+  .tarrow{width:34px;font-size:22px}
 }
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 </style>
@@ -264,7 +279,14 @@ header.top{display:flex;align-items:center;justify-content:space-between;gap:12p
         <div class="sweep" id="sweep"></div>
       </div>
     </div>
-    <div class="tray" id="tray" hidden></div>
+    <div class="traywrap" id="traywrap" hidden>
+      <button class="tarrow" id="tray-left" aria-label="Peças anteriores">&lsaquo;</button>
+      <div class="trayzone">
+        <div class="tray" id="tray"></div>
+        <div class="tprog"><i id="tprog-fill"></i></div>
+      </div>
+      <button class="tarrow" id="tray-right" aria-label="Próximas peças">&rsaquo;</button>
+    </div>
     <p class="hint" id="hint"></p>
   </section>
 
@@ -730,13 +752,13 @@ async function startGame(img,cols,rows,mode,restore){
 
   if(mode==="grid"){
     $("#frame").style.setProperty("--fit", cols*rows>48 ? "66vh" : "60vh");
-    $("#board").hidden=false; $("#jig").hidden=true; $("#tray").hidden=true;
+    $("#board").hidden=false; $("#jig").hidden=true; $("#traywrap").hidden=true;
     G.order = (restore && restore.order) || shuffled(cols*rows);
     buildGridBoard();
     $("#help").title="Marcar as peças já certas";
   } else {
     $("#frame").style.setProperty("--fit","46vh");
-    $("#board").hidden=true; $("#jig").hidden=false; $("#tray").hidden=false;
+    $("#board").hidden=true; $("#jig").hidden=false; $("#traywrap").hidden=false;
     G.seed = (restore && restore.seed) || (Date.now()%2147483647);
     G.placed = (restore && restore.placed) || new Array(cols*rows).fill(false);
     $("#load").classList.add("on");
@@ -825,9 +847,11 @@ function buildJigBoard(){
     else loose.push(cv);
   }
   G.wPct=wPct; G.hPct=hPct;
+  tray.classList.toggle("dense", G.cols*G.rows>40);
   shuffled(loose.length).forEach(k=>tray.appendChild(loose[k]));
   tray.classList.toggle("empty", loose.length===0);
   G.sel=null;
+  requestAnimationFrame(trayUI);
 }
 function setOnBoard(cv,i,wPct,hPct){
   const r=Math.floor(i/G.cols), c=i%G.cols;
@@ -854,6 +878,7 @@ function placePiece(i){
   G.placed[i]=true; G.moves++;
   beep(880,0.1,0.055);
   $("#tray").classList.toggle("empty", !$("#tray").querySelector(".pc"));
+  trayUI();
   updateStats(); save();
   if(G.placed.every(Boolean)) finish();
 }
@@ -876,7 +901,7 @@ function finish(){
   clearInterval(timer);
   localStorage.removeItem("tessera.game");
   if(G.mode==="grid"){ paintGrid(); $("#board").classList.add("solved"); }
-  else { $("#jig").classList.remove("guided"); $("#tray").hidden=true; }
+  else { $("#jig").classList.remove("guided"); $("#traywrap").hidden=true; }
   const sw=$("#sweep"); sw.classList.remove("go"); void sw.offsetWidth; sw.classList.add("go");
   chime();
   setTimeout(()=>{
@@ -960,8 +985,9 @@ function finish(){
     if(!dragging){
       const ax=Math.abs(dx), ay=Math.abs(dy);
       /* gesto claramente horizontal e começado na bandeja => rolar a bandeja */
-      if(naBandeja && ax>12 && ax>ay*1.4){
-        rolando=true; $("#tray").scrollLeft = rol0 - dx; return;
+      if(naBandeja && ax>7 && ax>=ay){
+        rolando=true; $("#tray").style.scrollBehavior="auto";
+        $("#tray").scrollLeft = rol0 - dx; return;
       }
       if(Math.hypot(dx,dy)>7){
         dragging=true;
@@ -1008,7 +1034,7 @@ function finish(){
     zerar();
   });
 
-  function zerar(){ mode=null; startPt=null; dragging=false; rolando=false; node=null; from=-1; }
+  function zerar(){ $("#tray").style.scrollBehavior=""; mode=null; startPt=null; dragging=false; rolando=false; node=null; from=-1; }
   /* rede de segurança: nenhuma peça pode ficar esquecida flutuando na tela */
   function soltarPresas(){
     $$('.pc[data-loose="1"]').forEach(n=>{ if(n!==node) returnToTray(n); });
@@ -1039,6 +1065,29 @@ function finish(){
     zerar();
   });
 })();
+
+/* ============ bandeja: setas e indicador de posição ============ */
+function trayUI(){
+  const t=$("#tray"), max=t.scrollWidth-t.clientWidth;
+  const temRolagem = max > 4;
+  $("#tray-left").disabled  = !temRolagem || t.scrollLeft <= 2;
+  $("#tray-right").disabled = !temRolagem || t.scrollLeft >= max-2;
+  const prog=$(".tprog");
+  prog.classList.toggle("on", temRolagem);
+  if(temRolagem){
+    const vis=Math.max(.08, t.clientWidth/t.scrollWidth);
+    const pos=(t.scrollLeft/max)*(1-vis);
+    $("#tprog-fill").style.transform="scaleX("+vis+") translateX("+(pos/vis*100)+"%)";
+  }
+}
+function rolarBandeja(dir){
+  const t=$("#tray");
+  t.scrollBy({ left: dir*Math.max(120, t.clientWidth*0.8), behavior:"smooth" });
+}
+$("#tray-left").onclick  = ()=>rolarBandeja(-1);
+$("#tray-right").onclick = ()=>rolarBandeja(1);
+$("#tray").addEventListener("scroll", trayUI, {passive:true});
+window.addEventListener("resize", ()=>{ if(G&&G.mode==="jig") trayUI(); });
 
 /* ============ bloqueio de gestos nativos (iOS) ============ */
 document.addEventListener("contextmenu", e=>{
